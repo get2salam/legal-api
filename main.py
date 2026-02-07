@@ -8,9 +8,12 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Security
+from fastapi import FastAPI, Depends, HTTPException, Query, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -39,6 +42,8 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 # API Key authentication (optional)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -67,6 +72,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -81,7 +90,9 @@ app.add_middleware(
 
 
 @app.get("/api/v1/search", response_model=SearchResponse)
+@limiter.limit("60/minute")
 async def search(
+    request: Request,
     q: str = Query(..., description="Search query"),
     court: Optional[str] = Query(None, description="Filter by court"),
     year: Optional[int] = Query(None, description="Filter by year"),
