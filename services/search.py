@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Case
 from models import SearchResponse, CaseResponse, CaseDetail
+from services.highlight import highlight_snippet
 
 
 async def search_cases(
@@ -20,6 +21,7 @@ async def search_cases(
     date_to: Optional[str] = None,
     page: int = 1,
     per_page: int = 20,
+    highlight: bool = True,
 ) -> SearchResponse:
     """
     Search for cases with filters and pagination.
@@ -77,9 +79,14 @@ async def search_cases(
     # Format results
     results = []
     for case in cases:
-        # Create snippet from headnote or text
-        snippet = case.headnote or (case.text[:300] + "..." if case.text else None)
-        
+        # Create snippet from headnote or full text
+        source = case.headnote or case.text or ""
+
+        if highlight and query:
+            snippet = highlight_snippet(source, query, max_length=300)
+        else:
+            snippet = source[:300] + "..." if len(source) > 300 else source or None
+
         results.append(CaseResponse(
             id=case.id,
             title=case.title,
