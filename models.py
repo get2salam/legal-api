@@ -2,39 +2,41 @@
 Pydantic models for request/response schemas.
 """
 
-from datetime import date
-from typing import Optional
 from pydantic import BaseModel
 
 
 class CaseBase(BaseModel):
     """Base case fields."""
+
     id: str
     title: str
-    citation: Optional[str] = None
-    court: Optional[str] = None
-    date: Optional[str] = None
+    citation: str | None = None
+    court: str | None = None
+    date: str | None = None
 
 
 class CaseResponse(CaseBase):
     """Case in search results (abbreviated)."""
-    snippet: Optional[str] = None
-    relevance: Optional[float] = None
+
+    snippet: str | None = None
+    relevance: float | None = None
 
 
 class CaseDetail(CaseBase):
     """Full case details."""
-    judges: Optional[list[str]] = None
-    headnote: Optional[str] = None
-    text: Optional[str] = None
-    citations_found: Optional[list[str]] = None
-    
+
+    judges: list[str] | None = None
+    headnote: str | None = None
+    text: str | None = None
+    citations_found: list[str] | None = None
+
     class Config:
         from_attributes = True
 
 
 class SearchResponse(BaseModel):
     """Paginated search results."""
+
     total: int
     page: int
     per_page: int
@@ -44,19 +46,22 @@ class SearchResponse(BaseModel):
 
 class StatsResponse(BaseModel):
     """Overall statistics."""
+
     total_cases: int
     total_courts: int
-    year_range: Optional[dict] = None
-    avg_text_length: Optional[int] = None
+    year_range: dict | None = None
+    avg_text_length: int | None = None
 
 
 class CourtStats(BaseModel):
     """Statistics by court."""
+
     court: str
     count: int
 
 
 class YearStats(BaseModel):
     """Statistics by year."""
+
     year: int
     count: int

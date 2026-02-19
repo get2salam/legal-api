@@ -3,15 +3,14 @@ Search highlighting — wrap matched terms in <mark> tags for display.
 """
 
 import re
-from typing import Optional
 
 
 def highlight_snippet(
-    text: Optional[str],
+    text: str | None,
     query: str,
     max_length: int = 300,
     tag: str = "mark",
-) -> Optional[str]:
+) -> str | None:
     """
     Extract a snippet around the first match and highlight all occurrences.
 

@@ -2,9 +2,10 @@
 Database setup and connection management.
 """
 
-from typing import AsyncGenerator
-from sqlalchemy import Column, String, Integer, Text, Date, create_engine
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from collections.abc import AsyncGenerator
+
+from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -16,8 +17,9 @@ async_session = None
 
 class Case(Base):
     """Case law database model."""
+
     __tablename__ = "cases"
-    
+
     id = Column(String, primary_key=True)
     title = Column(String, nullable=False)
     citation = Column(String, index=True)
@@ -32,14 +34,14 @@ class Case(Base):
 async def init_db(database_url: str):
     """Initialize database connection."""
     global engine, async_session
-    
+
     # Convert sqlite URL for async
     if database_url.startswith("sqlite:///"):
         database_url = database_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-    
+
     engine = create_async_engine(database_url, echo=False)
     async_session = async_sessionmaker(engine, expire_on_commit=False)
-    
+
     # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

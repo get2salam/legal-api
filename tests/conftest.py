@@ -3,15 +3,15 @@ Shared test fixtures for Legal API tests.
 """
 
 import asyncio
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from main import app
 from database import get_db
+from main import app
 
 
 @pytest.fixture(scope="session")
@@ -52,6 +52,7 @@ async def client(override_db) -> AsyncGenerator[AsyncClient, None]:
 # ---------------------------------------------------------------------------
 # Sample data helpers
 # ---------------------------------------------------------------------------
+
 
 def make_case_row(
     id: str = "case_001",

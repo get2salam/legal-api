@@ -25,7 +25,8 @@ select = [
     "SIM", # flake8-simplify
 ]
 ignore = [
-    "E501", # line too long — handled by formatter
+    "E501",  # line too long — handled by formatter
+    "B008",  # Depends() in defaults — standard FastAPI pattern
 ]
 
 [tool.ruff.lint.isort]

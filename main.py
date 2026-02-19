@@ -4,32 +4,32 @@ Legal API - FastAPI REST backend for case law search.
 A generic, jurisdiction-agnostic API for legal research.
 """
 
-import os
 from contextlib import asynccontextmanager
-from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Security, Request
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi.security.api_key import APIKeyHeader
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 from pydantic_settings import BaseSettings
-from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
-from database import init_db, get_db, AsyncSession
-from models import CaseResponse, CaseDetail, SearchResponse, StatsResponse
-from services.search import search_cases, get_case_by_id
-from services.stats import get_statistics, get_court_stats, get_year_stats
-from services.export import export_cases_csv, export_cases_jsonl
+from database import AsyncSession, get_db, init_db
 from middleware import RequestLoggingMiddleware, setup_logging
+from models import CaseDetail, SearchResponse, StatsResponse
+from services.cache import search_cache
+from services.export import export_cases_csv, export_cases_jsonl
+from services.search import get_case_by_id, search_cases
+from services.stats import get_court_stats, get_statistics, get_year_stats
 
 load_dotenv()
 
 
 class Settings(BaseSettings):
     """Application settings."""
+
     api_title: str = "Legal Case Law API"
     api_version: str = "1.0.0"
     database_url: str = "sqlite+aiosqlite:///./legal.db"
@@ -105,10 +105,10 @@ app.add_middleware(
 async def search(
     request: Request,
     q: str = Query(..., description="Search query"),
-    court: Optional[str] = Query(None, description="Filter by court"),
-    year: Optional[int] = Query(None, description="Filter by year"),
-    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
-    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    court: str | None = Query(None, description="Filter by court"),
+    year: int | None = Query(None, description="Filter by year"),
+    date_from: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, description="End date (YYYY-MM-DD)"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(None, ge=1, le=100, description="Results per page"),
     highlight: bool = Query(True, description="Highlight matching terms in snippets"),
@@ -117,13 +117,13 @@ async def search(
 ):
     """
     Search for legal cases.
-    
+
     Returns paginated results with relevance ranking.
     Set ``highlight=false`` to disable ``<mark>`` tag wrapping in snippets.
     """
     per_page = per_page or settings.per_page_default
     per_page = min(per_page, settings.per_page_max)
-    
+
     results = await search_cases(
         db=db,
         query=q,
@@ -135,7 +135,7 @@ async def search(
         per_page=per_page,
         highlight=highlight,
     )
-    
+
     return results
 
 
@@ -201,10 +201,10 @@ async def stats_by_year(
 async def export_csv(
     request: Request,
     q: str = Query(..., description="Search query"),
-    court: Optional[str] = Query(None, description="Filter by court"),
-    year: Optional[int] = Query(None, description="Filter by year"),
-    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
-    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    court: str | None = Query(None, description="Filter by court"),
+    year: int | None = Query(None, description="Filter by year"),
+    date_from: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, description="End date (YYYY-MM-DD)"),
     limit: int = Query(1000, ge=1, le=10000, description="Max rows"),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(verify_api_key),
@@ -215,8 +215,13 @@ async def export_csv(
     Returns a downloadable CSV file with matching cases.
     """
     csv_text, count = await export_cases_csv(
-        db=db, query=q, court=court, year=year,
-        date_from=date_from, date_to=date_to, limit=limit,
+        db=db,
+        query=q,
+        court=court,
+        year=year,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
     )
     return PlainTextResponse(
         content=csv_text,
@@ -233,10 +238,10 @@ async def export_csv(
 async def export_jsonl(
     request: Request,
     q: str = Query(..., description="Search query"),
-    court: Optional[str] = Query(None, description="Filter by court"),
-    year: Optional[int] = Query(None, description="Filter by year"),
-    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
-    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    court: str | None = Query(None, description="Filter by court"),
+    year: int | None = Query(None, description="Filter by year"),
+    date_from: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, description="End date (YYYY-MM-DD)"),
     limit: int = Query(1000, ge=1, le=10000, description="Max rows"),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(verify_api_key),
@@ -247,8 +252,13 @@ async def export_jsonl(
     Useful for bulk ingestion into data pipelines or vector databases.
     """
     jsonl_text, count = await export_cases_jsonl(
-        db=db, query=q, court=court, year=year,
-        date_from=date_from, date_to=date_to, limit=limit,
+        db=db,
+        query=q,
+        court=court,
+        year=year,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
     )
     return PlainTextResponse(
         content=jsonl_text,
@@ -258,6 +268,47 @@ async def export_jsonl(
             "X-Export-Count": str(count),
         },
     )
+
+
+# ─── Cache Endpoints ──────────────────────────────────────────────────────────
+
+
+@app.get("/api/v1/cache/stats")
+async def cache_stats(
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Return search cache statistics.
+
+    Useful for monitoring cache effectiveness and tuning TTL / max-size.
+    """
+    return search_cache.stats().to_dict()
+
+
+@app.delete("/api/v1/cache")
+async def cache_clear(
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Flush the entire search cache.
+
+    Use after bulk data imports or schema changes.
+    """
+    removed = search_cache.clear()
+    return {"cleared": removed}
+
+
+@app.post("/api/v1/cache/purge")
+async def cache_purge(
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Remove only expired entries from the cache.
+
+    Lighter than a full clear — keeps warm entries intact.
+    """
+    removed = search_cache.purge_expired()
+    return {"purged": removed}
 
 
 # ─── Utility Endpoints ───────────────────────────────────────────────────────
@@ -283,4 +334,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

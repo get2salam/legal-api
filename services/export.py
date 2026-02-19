@@ -5,9 +5,8 @@ Export service — generate CSV and JSONL downloads from search results.
 import csv
 import io
 import json
-from typing import Optional
 
-from sqlalchemy import select, func, or_, and_
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Case
@@ -19,10 +18,10 @@ MAX_EXPORT_ROWS = 10_000
 async def export_cases_csv(
     db: AsyncSession,
     query: str,
-    court: Optional[str] = None,
-    year: Optional[int] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
+    court: str | None = None,
+    year: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     limit: int = MAX_EXPORT_ROWS,
 ) -> tuple[str, int]:
     """
@@ -37,16 +36,18 @@ async def export_cases_csv(
     writer.writerow(["id", "title", "citation", "court", "date", "year", "judges", "headnote"])
 
     for c in cases:
-        writer.writerow([
-            c.id,
-            c.title,
-            c.citation or "",
-            c.court or "",
-            c.date or "",
-            c.year or "",
-            c.judges or "",
-            (c.headnote or "")[:500],  # Truncate for CSV readability
-        ])
+        writer.writerow(
+            [
+                c.id,
+                c.title,
+                c.citation or "",
+                c.court or "",
+                c.date or "",
+                c.year or "",
+                c.judges or "",
+                (c.headnote or "")[:500],  # Truncate for CSV readability
+            ]
+        )
 
     return buf.getvalue(), len(cases)
 
@@ -54,10 +55,10 @@ async def export_cases_csv(
 async def export_cases_jsonl(
     db: AsyncSession,
     query: str,
-    court: Optional[str] = None,
-    year: Optional[int] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
+    court: str | None = None,
+    year: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     limit: int = MAX_EXPORT_ROWS,
 ) -> tuple[str, int]:
     """
@@ -90,10 +91,10 @@ async def export_cases_jsonl(
 async def _fetch_export_rows(
     db: AsyncSession,
     query: str,
-    court: Optional[str],
-    year: Optional[int],
-    date_from: Optional[str],
-    date_to: Optional[str],
+    court: str | None,
+    year: int | None,
+    date_from: str | None,
+    date_to: str | None,
     limit: int,
 ) -> list[Case]:
     """Build query, apply filters, and fetch rows."""

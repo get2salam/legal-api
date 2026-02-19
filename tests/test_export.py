@@ -7,7 +7,6 @@ from httpx import AsyncClient
 
 from services.highlight import highlight_snippet
 
-
 # ─── CSV Export ───────────────────────────────────────────────────────────────
 
 
@@ -33,9 +32,7 @@ async def test_export_csv_count_header(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_export_csv_with_filters(client: AsyncClient):
     """CSV export respects court filter."""
-    resp = await client.get(
-        "/api/v1/export/csv", params={"q": "text", "court": "Supreme Court"}
-    )
+    resp = await client.get("/api/v1/export/csv", params={"q": "text", "court": "Supreme Court"})
     assert resp.status_code == 200
     lines = resp.text.strip().split("\n")
     for line in lines[1:]:
@@ -62,7 +59,7 @@ async def test_export_jsonl(client: AsyncClient):
     resp = await client.get("/api/v1/export/jsonl", params={"q": "contract"})
     assert resp.status_code == 200
     assert "ndjson" in resp.headers["content-type"]
-    lines = [l for l in resp.text.strip().split("\n") if l]
+    lines = [line for line in resp.text.strip().split("\n") if line]
     assert len(lines) >= 1
     obj = json.loads(lines[0])
     assert "id" in obj
@@ -136,9 +133,7 @@ async def test_search_with_highlight(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_search_no_highlight(client: AsyncClient):
     """Search with highlight=false returns plain snippets."""
-    resp = await client.get(
-        "/api/v1/search", params={"q": "contract", "highlight": "false"}
-    )
+    resp = await client.get("/api/v1/search", params={"q": "contract", "highlight": "false"})
     data = resp.json()
     for r in data["results"]:
         if r.get("snippet"):

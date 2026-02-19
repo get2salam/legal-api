@@ -4,12 +4,10 @@ Unit tests for Legal API endpoints.
 All database calls are mocked — no real DB is required.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
-
-from tests.conftest import make_case_row
 
 # ---------------------------------------------------------------------------
 # Health
