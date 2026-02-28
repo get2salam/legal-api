@@ -5,6 +5,10 @@ Includes an in-memory LRU cache layer (see ``services.cache``) that
 short-circuits the database for repeated queries within a configurable
 TTL window.  The cache key is derived from the *full* set of normalised
 query parameters so different filters never collide.
+
+Results are re-ranked with Okapi BM25 when a query string is supplied.
+The ``relevance`` field in each ``CaseResponse`` reflects the BM25 score
+(normalised to [0, 1]).  Without a query, relevance defaults to ``1.0``.
 """
 
 import json
@@ -17,6 +21,7 @@ from database import Case
 from models import CaseDetail, CaseResponse, SearchResponse
 from services.cache import SearchCache, search_cache
 from services.highlight import highlight_snippet
+from services.ranking import BM25Scorer
 
 logger = logging.getLogger("legal_api.search")
 
@@ -33,17 +38,18 @@ async def search_cases(
     highlight: bool = True,
 ) -> SearchResponse:
     """
-    Search for cases with filters and pagination.
+    Search for cases with filters, pagination, and BM25 relevance ranking.
 
     Results are cached in an LRU cache keyed by the full parameter set.
     Cache hits avoid the database round-trip entirely.
 
-    Uses simple LIKE matching. For production, consider:
-    - Full-text search (PostgreSQL tsvector, SQLite FTS5)
-    - Elasticsearch integration
-    - Semantic search with embeddings
+    Relevance scores are computed using Okapi BM25 over the page of
+    results returned by the database.  Scores are normalised so the
+    highest-scoring document receives ``1.0``; all others are scaled
+    proportionally.  When no query is supplied, ``relevance`` is ``1.0``
+    for every result.
     """
-    # ── Check cache ──────────────────────────────────────────────────────
+    # -- Check cache ---------------------------------------------------------
     cache_key = SearchCache.make_key(
         q=query,
         court=court,
@@ -60,7 +66,7 @@ async def search_cases(
         logger.debug("cache hit for key=%s", cache_key[:12])
         return cached
 
-    # ── Cache miss — query the database ──────────────────────────────────
+    # -- Cache miss -- query the database ------------------------------------
     logger.debug("cache miss for key=%s, querying DB", cache_key[:12])
 
     # Build base query
@@ -108,9 +114,12 @@ async def search_cases(
     result = await db.execute(stmt)
     cases = result.scalars().all()
 
-    # Format results
+    # -- BM25 relevance ranking ----------------------------------------------
+    bm25_scores: list[float] = _compute_bm25_scores(query, cases)
+
+    # -- Format results ------------------------------------------------------
     results = []
-    for case in cases:
+    for i, case in enumerate(cases):
         # Create snippet from headnote or full text
         source = case.headnote or case.text or ""
 
@@ -127,9 +136,13 @@ async def search_cases(
                 court=case.court,
                 date=case.date,
                 snippet=snippet,
-                relevance=1.0,  # Simple ranking; enhance with BM25/TF-IDF
+                relevance=round(bm25_scores[i], 4),
             )
         )
+
+    # Sort results by BM25 relevance (highest first)
+    if query:
+        results.sort(key=lambda r: r.relevance or 0.0, reverse=True)
 
     total_pages = (total + per_page - 1) // per_page
 
@@ -141,10 +154,54 @@ async def search_cases(
         results=results,
     )
 
-    # ── Store in cache ───────────────────────────────────────────────────
+    # -- Store in cache ------------------------------------------------------
     search_cache.put(cache_key, response)
 
     return response
+
+
+def _compute_bm25_scores(query: str, cases: list) -> list[float]:
+    """Compute normalised BM25 relevance scores for a list of DB case rows.
+
+    Parameters
+    ----------
+    query:
+        The user-supplied search string.
+    cases:
+        ORM ``Case`` objects returned by the database query.
+
+    Returns
+    -------
+    list[float]
+        Relevance score in ``[0.0, 1.0]`` for each case, in the same order.
+        Falls back to ``1.0`` per case when ``query`` is empty.
+    """
+    n = len(cases)
+    if not cases:
+        return []
+
+    if not query:
+        return [1.0] * n
+
+    # Build corpus: combine all searchable text fields per document
+    texts = [
+        " ".join(
+            filter(
+                None,
+                [case.title, case.citation, case.headnote, case.text],
+            )
+        )
+        for case in cases
+    ]
+
+    scorer = BM25Scorer(texts)
+    raw_scores = [scorer.score(query, i) for i in range(n)]
+
+    # Normalise to [0, 1] so the API response is easier to interpret
+    max_score = max(raw_scores) if any(s > 0 for s in raw_scores) else 1.0
+    if max_score == 0:
+        return [0.0] * n
+    return [s / max_score for s in raw_scores]
 
 
 async def get_case_by_id(db: AsyncSession, case_id: str) -> CaseDetail | None:
