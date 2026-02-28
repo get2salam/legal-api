@@ -2,6 +2,9 @@
 Tests for export and highlight features.
 """
 
+import json
+from unittest.mock import patch
+
 import pytest
 from httpx import AsyncClient
 
@@ -9,9 +12,37 @@ from services.highlight import highlight_snippet
 
 # ─── CSV Export ───────────────────────────────────────────────────────────────
 
+_CSV_RESPONSE = (
+    "id,title,citation,court,date,year,judges,headnote\n"
+    'case_001,Smith v. State,2024 SC 445,Supreme Court,2024-03-15,2024,"[""Justice A""]",Brief summary\n',
+    1,
+)
+
+_CSV_RESPONSE_NO_RESULTS = (
+    "id,title,citation,court,date,year,judges,headnote\n",
+    0,
+)
+
+_JSONL_RESPONSE = (
+    json.dumps(
+        {
+            "id": "case_001",
+            "title": "Smith v. State",
+            "citation": "2024 SC 445",
+            "court": "Supreme Court",
+            "date": "2024-03-15",
+            "year": 2024,
+            "judges": '["Justice A"]',
+            "headnote": "Brief summary",
+        }
+    ),
+    1,
+)
+
 
 @pytest.mark.asyncio
-async def test_export_csv(client: AsyncClient):
+@patch("main.export_cases_csv", return_value=_CSV_RESPONSE)
+async def test_export_csv(mock_export, client: AsyncClient):
     """CSV export returns valid CSV with headers."""
     resp = await client.get("/api/v1/export/csv", params={"q": "contract"})
     assert resp.status_code == 200
@@ -22,7 +53,8 @@ async def test_export_csv(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_export_csv_count_header(client: AsyncClient):
+@patch("main.export_cases_csv", return_value=_CSV_RESPONSE)
+async def test_export_csv_count_header(mock_export, client: AsyncClient):
     """CSV export includes X-Export-Count header."""
     resp = await client.get("/api/v1/export/csv", params={"q": "text"})
     assert "X-Export-Count" in resp.headers
@@ -30,7 +62,15 @@ async def test_export_csv_count_header(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_export_csv_with_filters(client: AsyncClient):
+@patch(
+    "main.export_cases_csv",
+    return_value=(
+        "id,title,citation,court,date,year,judges,headnote\n"
+        'case_001,Smith v. State,2024 SC 445,Supreme Court,2024-03-15,2024,"[""Justice A""]",Brief summary\n',
+        1,
+    ),
+)
+async def test_export_csv_with_filters(mock_export, client: AsyncClient):
     """CSV export respects court filter."""
     resp = await client.get("/api/v1/export/csv", params={"q": "text", "court": "Supreme Court"})
     assert resp.status_code == 200
@@ -40,7 +80,8 @@ async def test_export_csv_with_filters(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_export_csv_no_results(client: AsyncClient):
+@patch("main.export_cases_csv", return_value=_CSV_RESPONSE_NO_RESULTS)
+async def test_export_csv_no_results(mock_export, client: AsyncClient):
     """CSV export with no matches returns header only."""
     resp = await client.get("/api/v1/export/csv", params={"q": "xyznonexistent"})
     assert resp.status_code == 200
@@ -52,10 +93,9 @@ async def test_export_csv_no_results(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_export_jsonl(client: AsyncClient):
+@patch("main.export_cases_jsonl", return_value=_JSONL_RESPONSE)
+async def test_export_jsonl(mock_export, client: AsyncClient):
     """JSONL export returns valid JSON lines."""
-    import json
-
     resp = await client.get("/api/v1/export/jsonl", params={"q": "contract"})
     assert resp.status_code == 200
     assert "ndjson" in resp.headers["content-type"]
@@ -120,18 +160,57 @@ def test_highlight_long_text_centering():
 
 
 @pytest.mark.asyncio
-async def test_search_with_highlight(client: AsyncClient):
+@patch(
+    "main.search_cases",
+    return_value={
+        "total": 1,
+        "page": 1,
+        "per_page": 20,
+        "total_pages": 1,
+        "results": [
+            {
+                "id": "case_001",
+                "title": "Smith v. State",
+                "citation": "2024 SC 445",
+                "court": "Supreme Court",
+                "date": "2024-03-15",
+                "snippet": "The <mark>contract</mark> was breached.",
+                "relevance": 1.0,
+            }
+        ],
+    },
+)
+async def test_search_with_highlight(mock_search, client: AsyncClient):
     """Search endpoint returns highlighted snippets by default."""
     resp = await client.get("/api/v1/search", params={"q": "contract"})
     data = resp.json()
     if data["results"]:
-        # At least one result should have <mark> in snippet
         snippets = [r["snippet"] for r in data["results"] if r.get("snippet")]
         assert any("<mark>" in s for s in snippets)
 
 
 @pytest.mark.asyncio
-async def test_search_no_highlight(client: AsyncClient):
+@patch(
+    "main.search_cases",
+    return_value={
+        "total": 1,
+        "page": 1,
+        "per_page": 20,
+        "total_pages": 1,
+        "results": [
+            {
+                "id": "case_001",
+                "title": "Smith v. State",
+                "citation": "2024 SC 445",
+                "court": "Supreme Court",
+                "date": "2024-03-15",
+                "snippet": "The contract was breached.",
+                "relevance": 1.0,
+            }
+        ],
+    },
+)
+async def test_search_no_highlight(mock_search, client: AsyncClient):
     """Search with highlight=false returns plain snippets."""
     resp = await client.get("/api/v1/search", params={"q": "contract", "highlight": "false"})
     data = resp.json()
