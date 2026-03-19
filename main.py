@@ -18,9 +18,10 @@ from slowapi.util import get_remote_address
 
 from database import AsyncSession, get_db, init_db
 from middleware import RequestLoggingMiddleware, setup_logging
-from models import CaseDetail, SearchResponse, StatsResponse
+from models import CaseDetail, QueryAnalysisResponse, SearchResponse, StatsResponse
 from services.cache import search_cache
 from services.export import export_cases_csv, export_cases_jsonl
+from services.query_understanding import understand_query
 from services.search import get_case_by_id, search_cases
 from services.stats import get_court_stats, get_statistics, get_year_stats
 
@@ -309,6 +310,58 @@ async def cache_purge(
     """
     removed = search_cache.purge_expired()
     return {"purged": removed}
+
+
+# ─── Query Understanding Endpoint ────────────────────────────────────────────
+
+
+@app.get("/api/v1/analyze", response_model=QueryAnalysisResponse)
+async def analyze_query(
+    q: str = Query(..., description="Query string to analyse"),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Analyse a search query without executing it.
+
+    Returns the normalised query, detected intent, extracted entities
+    (citations, courts, years, judge names, quoted phrases), synonym
+    expansion hints, and the token list.
+
+    Useful for:
+    - Query debugging and search-result explanation.
+    - Pre-flight checks before submitting expensive vector searches.
+    - Building query suggestion UIs that show users how their query
+      was interpreted.
+
+    **Intent values:**
+
+    | Value | Meaning |
+    |---|---|
+    | ``citation`` | Matches a structured citation (e.g. ``2021 SC 45``) |
+    | ``topical`` | General full-text subject search |
+    | ``judge`` | Query targets a specific judge by name |
+    | ``court`` | Query filters primarily by court name |
+    | ``date_range`` | Query expresses a year range |
+    | ``unknown`` | Intent could not be determined |
+    """
+    result = understand_query(q)
+    from models import QueryEntitiesResponse  # local to avoid circular import
+
+    return QueryAnalysisResponse(
+        original=result.original,
+        normalised=result.normalised,
+        intent=result.intent.value,
+        entities=QueryEntitiesResponse(
+            citations=result.entities.citations,
+            courts=result.entities.courts,
+            years=result.entities.years,
+            year_range=result.entities.year_range,
+            quoted_phrases=result.entities.quoted_phrases,
+            judge_names=result.entities.judge_names,
+        ),
+        expansions=result.expansions,
+        tokens=result.tokens,
+    )
 
 
 # ─── Utility Endpoints ───────────────────────────────────────────────────────

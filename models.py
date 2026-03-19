@@ -65,3 +65,32 @@ class YearStats(BaseModel):
 
     year: int
     count: int
+
+
+# ─── Query Understanding Models ───────────────────────────────────────────────
+
+
+class QueryEntitiesResponse(BaseModel):
+    """Structured entities extracted from a query string."""
+
+    citations: list[str]
+    courts: list[str]
+    years: list[int]
+    year_range: tuple[int, int] | None = None
+    quoted_phrases: list[str]
+    judge_names: list[str]
+
+
+class QueryAnalysisResponse(BaseModel):
+    """Response from the /analyze endpoint.
+
+    Contains the normalised query, detected intent, extracted entities,
+    optional synonym expansions, and the final token list.
+    """
+
+    original: str
+    normalised: str
+    intent: str
+    entities: QueryEntitiesResponse
+    expansions: list[str]
+    tokens: list[str]
